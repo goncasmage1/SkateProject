@@ -70,9 +70,11 @@ public:
 
 	ASkateProjectCharacter();
 	virtual void BeginPlay() override;
+	virtual void Tick(float DeltaTime) override;
+
+	//Called after the trick array is set in the blueprint on BeginPlay
 	UFUNCTION(BlueprintCallable)
 		void CustomBeginPlay();
-	virtual void Tick(float DeltaTime) override;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category=Camera)
 	float BaseTurnRate;
@@ -91,12 +93,13 @@ protected:
 	TArray<FTrick> TrickQueue;
 	//The trick that is currently able to be executed
 	FTrick EligibleTrick;
-	//Fetches the raw analog values
+	//Raw analog value
 	FVector2D AnalogRaw;
-	//Saves the position of the analog in the last tick event
+	//Raw analog value from last frame
 	FVector2D PreviousLocation;
-	//Tracks the position of the last reached trick point
+	//Raw analog value when the last trick point was executed
 	FVector2D LastTrickLocation;
+
 	int TrickPointIndex;
 
 	//Is the player dragging the analog around the edge?
@@ -104,8 +107,13 @@ protected:
 	//Determines whether the analog is still returning to origin after doing a trick
 	bool bReturningFromTrick;
 
+	/*Attempts to execute an eligible trick and resets the variables accordingly
+	to allow the player to execute another trick*/
 	void AttemptExecuteTrick();
-	bool RemoveTrick(int index);
+	
+	/*Removes the trick located at the specified index
+	and returns whether there are no more tricks left to execute*/
+	void RemoveTrick(int index);
 
 	void MoveForward(float Value);
 	void MoveRight(float Value);
