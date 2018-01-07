@@ -50,7 +50,7 @@ ASkateProjectCharacter::ASkateProjectCharacter()
 	PreviousLocation = FVector2D(0.1f, 0.f);
 
 	bIsDragging = false;
-
+	bInsideSafezone = false;
 }
 
 void ASkateProjectCharacter::BeginPlay()
@@ -85,8 +85,7 @@ void ASkateProjectCharacter::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
 
-	GEngine->AddOnScreenDebugMessage(1, .2f, FColor::Blue, FString::Printf(TEXT("%s"), *AnalogRaw.ToString()));
-	GEngine->AddOnScreenDebugMessage(2, 2.f, FColor::Blue, FString::Printf(TEXT("%d"), bIsDragging));
+	//GEngine->AddOnScreenDebugMessage(2, 2.f, FColor::Blue, FString::Printf(TEXT("Dragging: %d"), bIsDragging));
 
 	FVector2D AnalogLocation = AnalogRaw;
 	AnalogLocation.Normalize();
@@ -107,74 +106,78 @@ void ASkateProjectCharacter::Tick(float DeltaTime)
 		bReturningFromTrick = false;
 	}
 
+	//Check if the player is outside the safezone
+	if (bInsideSafezone && (AnalogRaw - LastTrickLocation).Size() >= TrickPointExecDistance*2.f)
+	{
+		bInsideSafezone = false;
+	}
+
+	if (bInsideSafezone) return;
+
 	//Check if the player is still dragging the analog along the edge
-	if (bIsDragging && AnalogRaw.Size() < 0.9f) bIsDragging = false;
+	if (bIsDragging && !bInsideSafezone && AnalogRaw.Size() < 0.9f &&
+		(AnalogRaw - LastTrickLocation).Size() >= TrickPointExecDistance*2.f)
+			bIsDragging = false;
 
 	for (int i = 0; i < TrickQueue.Num(); i++)
 	{
 		//Only check for angles between trickpoints if the player already reached a trick point
-		if (TrickPointIndex != 0)
+		if (TrickPointDepth != 0)
 		{
+			//Check angle between analog direction and trickpoint direction
 			FVector2D Vector1 = AnalogRaw - LastTrickLocation;
-			FVector2D Vector2 = TrickQueue[i].Points[TrickPointIndex].DesiredPosition - LastTrickLocation;
+			FVector2D Vector2 = TrickQueue[i].Points[TrickPointDepth].DesiredPosition - LastTrickLocation;
 			Vector1.Normalize();
 			Vector2.Normalize();
-			//Check angle between analog direction and trickpoint direction
 			float Dot = FVector2D::DotProduct(Vector1, Vector2);
 
 			/*
 			If this trick requires drag and player isn't dragging
-			or the joystick is not going in the direction of this trick,
-			remove it from the queue
+			or the analog isn't going towards the direction of this trick,
+			remove trick from queue
 			*/
-			if ((TrickQueue[i].Points[TrickPointIndex].bDrag && !bIsDragging) || Dot < MinimumRequiredDot)
+			if (TrickQueue[i].Points[TrickPointDepth].bDrag && !bIsDragging
+				||
+				!TrickQueue[i].Points[TrickPointDepth].bDrag && Dot < MinimumRequiredDot)
 			{
-				/*If the analog is still really close to the last trick location, don't remove trick,
-				give the player a chance*/
-				if ((AnalogRaw - LastTrickLocation).Size() >= TrickPointExecDistance*2.f)
-				{
-					GEngine->AddOnScreenDebugMessage(-1, 3.f, FColor::Blue, FString::Printf(TEXT("Removed %s at %f"), *TrickQueue[i].TrickName.ToString(), Dot));
-					RemoveTrick(i);
-					break;
-				}
+				PRINTTEXT(FString::Printf(TEXT("Removed %s"), *TrickQueue[i].TrickName.ToString()));
+				RemoveTrick(i);
+				break;
 			}
 		}
 
 		//Check if the analog has reached a TrickPoint location
-		if ((AnalogRaw - TrickQueue[i].Points[TrickPointIndex].DesiredPosition).Size() <= TrickPointExecDistance)
+		if ((AnalogRaw - TrickQueue[i].Points[TrickPointDepth].DesiredPosition).Size() <= TrickPointExecDistance)
 		{
-			TrickPointIndex++;
-			LastTrickLocation = TrickQueue[i].Points[TrickPointIndex-1].DesiredPosition;
+			//Give the player a safezone after reaching a trickpoint
+			bInsideSafezone = true;
+			bIsDragging = true;
+			TrickPointDepth++;
+			LastTrickLocation = TrickQueue[i].Points[TrickPointDepth-1].DesiredPosition;
 
 			//If this trick hit its last trick point, select as eligible trick
-			if (TrickPointIndex == TrickQueue[i].Points.Num())
+			if (TrickPointDepth == TrickQueue[i].Points.Num())
 			{
 				EligibleTrick = TrickQueue[i];
 				RemoveTrick(i);
+				if (TrickPointDepth == 0) break;
+			}
 
-				/*Remove all the other tricks with the same amount of trickpoints from the queue,
-				the trick and index i is the eligible trick!*/
-				int TricksRemoved = 0;
-				for (int j = 0; j < (TrickQueue.Num() + TricksRemoved); ++j)
+			/*Remove all tricks that don't have this trickpoint at this trickpoint index
+			and all the tricks with the same amount of trickpoints as the one at the current index*/
+			int TricksRemoved = 0;
+			for (int j = 0; j < (TrickQueue.Num() + TricksRemoved); ++j)
+			{
+				if ((TrickQueue[j - TricksRemoved].Points.Num() == TrickPointDepth) ||
+					(TrickQueue[j - TricksRemoved].Points[TrickPointDepth - 1].DesiredPosition != LastTrickLocation))
 				{
-					if (TrickQueue[j - TricksRemoved].Points.Num() == TrickPointIndex)
-					{
-						RemoveTrick(j - TricksRemoved);
-						TricksRemoved++;
-					}
+					PRINTTEXT(FString::Printf(TEXT("Removed %s"), *TrickQueue[j - TricksRemoved].TrickName.ToString()));
+					RemoveTrick(j - TricksRemoved);
+					if (TrickPointDepth == 0) break;
+					TricksRemoved++;
 				}
 			}
-			//If this trick doesn't have sufficient trick points anymore, remove from queue
-			else if (TrickPointIndex > TrickQueue[i].Points.Num())
-			{
-				GEngine->AddOnScreenDebugMessage(-1, 6.f, FColor::Blue, TEXT("IS THIS EVEN BEING CALLED??????"));
-				//RemoveTrick(i);
-			}
 
-			if (SkatePC)
-			{
-				SkatePC->UpdateTrickLocation(TrickQueue[0].Points[1].DesiredPosition);
-			}
 			break;
 		}
 	}
@@ -190,10 +193,11 @@ void ASkateProjectCharacter::AttemptExecuteTrick()
 	{
 		GEngine->AddOnScreenDebugMessage(-1, 3.f, FColor::Blue, FString::Printf(TEXT("%s"), *EligibleTrick.TrickName.ToString()));
 	}
-	TrickPointIndex = 0;
+	TrickPointDepth = 0;
 	LastTrickLocation = FVector2D(0.f, 0.f);
-	bIsDragging = true;
+	bIsDragging = false;
 	bReturningFromTrick = true;
+	bInsideSafezone = false;
 	TrickQueue.Empty();
 	TrickQueue.Append(Tricks);
 	EligibleTrick.Points.Empty();

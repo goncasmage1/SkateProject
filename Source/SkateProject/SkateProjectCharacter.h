@@ -6,6 +6,13 @@
 #include "GameFramework/Character.h"
 #include "SkateProjectCharacter.generated.h"
 
+/*
+This class represents the skateboarder character, specifically it reads input
+from the analog stick and attempts to execute the available tricks
+*/
+
+#define PRINTTEXT(Text) GEngine->AddOnScreenDebugMessage(-1, 2.f, FColor::Red, Text)
+
 USTRUCT(BlueprintType)
 struct FTrickPoint
 {
@@ -100,10 +107,12 @@ protected:
 	//Raw analog value when the last trick point was executed
 	FVector2D LastTrickLocation;
 
-	int TrickPointIndex;
+	int TrickPointDepth;
 
 	//Is the player dragging the analog around the edge?
 	bool bIsDragging;
+	//Determine whether the analog is inside a safezone
+	bool bInsideSafezone;
 	//Determines whether the analog is still returning to origin after doing a trick
 	bool bReturningFromTrick;
 
