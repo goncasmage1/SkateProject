@@ -2,9 +2,12 @@
 
 #include "SkateProjectCharacter.h"
 #include "SkateController.h"
+#include "Curves/CurveVector.h"
 #include "Camera/CameraComponent.h"
 #include "Components/CapsuleComponent.h"
+#include "Components/SkeletalMeshComponent.h"
 #include "Components/InputComponent.h"
+#include "Kismet/KismetMathLibrary.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/Controller.h"
 #include "GameFramework/SpringArmComponent.h"
@@ -43,28 +46,36 @@ ASkateProjectCharacter::ASkateProjectCharacter()
 	FollowCamera->SetupAttachment(CameraBoom, USpringArmComponent::SocketName); // Attach the camera to the end of the boom and let the boom adjust to match the controller orientation
 	FollowCamera->bUsePawnControlRotation = false; // Camera does not rotate relative to arm
 
+	SM_Skateboard = CreateDefaultSubobject<USkeletalMeshComponent>(("Skateboard"));
+	SM_Skateboard->SetupAttachment(RootComponent);
+
 	MinimumRequiredDot = 0.6f;
-	TrickPointExecDistance = 0.2f;
+	TrickPointExecDistance = 0.1f;
 	Deadzone = 0.05f;
+	TimeCounter = 0.f;
+	TrickTime = 0.f;
 	LastTrickLocation = FVector2D(0.f, 0.f);
 	PreviousLocation = FVector2D(0.1f, 0.f);
 
 	bIsDragging = false;
 	bInsideSafezone = false;
+	bExecutingTrick = false;
 }
 
 void ASkateProjectCharacter::BeginPlay()
 {
 	Super::BeginPlay();
+
+	StartPosition = GetMesh()->GetRelativeTransform().GetLocation();
+	StartRotation = GetMesh()->GetComponentRotation();
 }
 
 void ASkateProjectCharacter::CustomBeginPlay()
 {
 	SkatePC = Cast<ASkateController>(GetController());
-	if (!SkatePC)
-	{
-		GEngine->AddOnScreenDebugMessage(-1, 3.f, FColor::Red, TEXT("Player Character: NO PC FOUND"));
-	}
+
+	check(SkatePC != nullptr && "NO PC FOUND")
+
 	//Calculate Joystick Position for each trickpoint
 	for (int i = 0; i < Tricks.Num(); i++)
 	{
@@ -72,37 +83,61 @@ void ASkateProjectCharacter::CustomBeginPlay()
 		{
 			Tricks[i].Points[j].DesiredPosition = FVector2D(FMath::Cos(FMath::DegreesToRadians(Tricks[i].Points[j].Angle)), FMath::Sin(FMath::DegreesToRadians(Tricks[i].Points[j].Angle)));
 		}
+		Tricks[i].TrickIndex = i;
 	}
 	TrickQueue.Empty();
 	TrickQueue.Append(Tricks);
-	if (SkatePC)
-	{
-		SkatePC->UpdateLastLocation(LastTrickLocation);
-	}
 }
 
 void ASkateProjectCharacter::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
 
-	//GEngine->AddOnScreenDebugMessage(2, 2.f, FColor::Blue, FString::Printf(TEXT("Dragging: %d"), bIsDragging));
+	if (bExecutingTrick)
+	{
+		HandleTrickExecution(DeltaTime);
+	}
+	else
+	{
+		HandleAnalogInput(DeltaTime);
+	}
+}
 
+void ASkateProjectCharacter::HandleTrickExecution(float DeltaTime)
+{
+	GetMesh()->SetRelativeLocation(StartPosition + TricksLocationCurves[EligibleTrick.TrickIndex]->GetVectorValue(TimeCounter));
+	FVector NewRotation = TricksRotationCurves[EligibleTrick.TrickIndex]->GetVectorValue(TimeCounter);
+	FRotator Rot1, Rot2, Rot3, Result;
+	Rot1 = FRotator(NewRotation.Z, 0.f, 0.f);
+	Rot2 = FRotator(0.f, NewRotation.Y, 0.f);
+	Rot3 = FRotator(0.f, 0.f, NewRotation.X);
+	Result = UKismetMathLibrary::ComposeRotators(UKismetMathLibrary::ComposeRotators(Rot1, Rot2), Rot3);
+
+	GetMesh()->SetRelativeRotation(Result);
+	//GetMesh()->SetRelativeLocationAndRotation(StartPosition + TricksLocationCurves[EligibleTrick.TrickIndex]->GetVectorValue(TimeCounter), FRotator(NewRotation.Z, NewRotation.Y, NewRotation.X).Quaternion());
+	//GetMesh()->AddLocalRotation(FRotator(1.f, 0.f, 0.f).Quaternion());
+
+	TimeCounter += DeltaTime;
+	if (TimeCounter >= TrickTime)
+	{
+		TimeCounter = 0.f;
+		bExecutingTrick = false;
+	}
+}
+
+void ASkateProjectCharacter::HandleAnalogInput(float DeltaTime)
+{
 	FVector2D AnalogLocation = AnalogRaw;
 	AnalogLocation.Normalize();
 
 	//Update analog location in UI
-	if (SkatePC)
-	{
-		SkatePC->UpdateAnalogLocation(AnalogRaw);
-	}
+	if (SkatePC) SkatePC->UpdateAnalogLocation(AnalogRaw);
 
 	//After the player executed a trick, the analog must return to the deadzone
 	if (bReturningFromTrick)
 	{
 		if (AnalogRaw.Size() > Deadzone)
-		{
 			return;
-		}
 		bReturningFromTrick = false;
 	}
 
@@ -115,10 +150,17 @@ void ASkateProjectCharacter::Tick(float DeltaTime)
 	if (bInsideSafezone) return;
 
 	//Check if the player is still dragging the analog along the edge
-	if (bIsDragging && !bInsideSafezone && AnalogRaw.Size() < 0.9f &&
-		(AnalogRaw - LastTrickLocation).Size() >= TrickPointExecDistance*2.f)
-			bIsDragging = false;
+	if (bIsDragging && !bInsideSafezone && AnalogRaw.Size() < 0.9f)
+		bIsDragging = false;
 
+	AnalyzeTricks();
+
+	FVector2D Dir = AnalogRaw - PreviousLocation;
+	PreviousLocation = AnalogRaw;
+}
+
+void ASkateProjectCharacter::AnalyzeTricks()
+{
 	for (int i = 0; i < TrickQueue.Num(); i++)
 	{
 		//Only check for angles between trickpoints if the player already reached a trick point
@@ -153,7 +195,7 @@ void ASkateProjectCharacter::Tick(float DeltaTime)
 			bInsideSafezone = true;
 			bIsDragging = true;
 			TrickPointDepth++;
-			LastTrickLocation = TrickQueue[i].Points[TrickPointDepth-1].DesiredPosition;
+			LastTrickLocation = TrickQueue[i].Points[TrickPointDepth - 1].DesiredPosition;
 
 			//If this trick hit its last trick point, select as eligible trick
 			if (TrickPointDepth == TrickQueue[i].Points.Num())
@@ -163,7 +205,7 @@ void ASkateProjectCharacter::Tick(float DeltaTime)
 				if (TrickPointDepth == 0) break;
 			}
 
-			/*Remove all tricks that don't have this trickpoint at this trickpoint index
+			/*Remove all tricks that don't have this trickpoint at this trickpoint depth
 			and all the tricks with the same amount of trickpoints as the one at the current index*/
 			int TricksRemoved = 0;
 			for (int j = 0; j < (TrickQueue.Num() + TricksRemoved); ++j)
@@ -171,8 +213,9 @@ void ASkateProjectCharacter::Tick(float DeltaTime)
 				if ((TrickQueue[j - TricksRemoved].Points.Num() == TrickPointDepth) ||
 					(TrickQueue[j - TricksRemoved].Points[TrickPointDepth - 1].DesiredPosition != LastTrickLocation))
 				{
-					PRINTTEXT(FString::Printf(TEXT("Removed %s"), *TrickQueue[j - TricksRemoved].TrickName.ToString()));
+					//PRINTTEXT(FString::Printf(TEXT("Removed %s"), *TrickQueue[j - TricksRemoved].TrickName.ToString()));
 					RemoveTrick(j - TricksRemoved);
+					//If tricks were reset, stop searching
 					if (TrickPointDepth == 0) break;
 					TricksRemoved++;
 				}
@@ -181,9 +224,6 @@ void ASkateProjectCharacter::Tick(float DeltaTime)
 			break;
 		}
 	}
-
-	FVector2D Dir = AnalogRaw - PreviousLocation;
-	PreviousLocation = AnalogRaw;
 }
 
 void ASkateProjectCharacter::AttemptExecuteTrick()
@@ -191,7 +231,18 @@ void ASkateProjectCharacter::AttemptExecuteTrick()
 	//Check if the eligible trick is valid
 	if (EligibleTrick.Points.Num() != 0)
 	{
-		GEngine->AddOnScreenDebugMessage(-1, 3.f, FColor::Blue, FString::Printf(TEXT("%s"), *EligibleTrick.TrickName.ToString()));
+		GEngine->AddOnScreenDebugMessage(-1, 3.f, FColor::Blue, FString::Printf(TEXT("Executed %s"), *EligibleTrick.TrickName.ToString()));
+		if (TricksLocationCurves.Num() > EligibleTrick.TrickIndex)
+		{
+			bExecutingTrick = true;
+			float Min, Max;
+			TricksLocationCurves[EligibleTrick.TrickIndex]->GetTimeRange(Min, Max);
+			TrickTime = Max;
+		}
+		else
+		{
+			GEngine->AddOnScreenDebugMessage(-1, 3.f, FColor::Blue, FString::Printf(TEXT("Trick Curve not found!"), *EligibleTrick.TrickName.ToString()));
+		}
 	}
 	TrickPointDepth = 0;
 	LastTrickLocation = FVector2D(0.f, 0.f);
@@ -226,9 +277,7 @@ void ASkateProjectCharacter::SetupPlayerInputComponent(class UInputComponent* Pl
 	// We have 2 versions of the rotation bindings to handle different kinds of devices differently
 	// "turn" handles devices that provide an absolute delta, such as a mouse.
 	// "turnrate" is for devices that we choose to treat as a rate of change, such as an analog joystick
-	PlayerInputComponent->BindAxis("Turn", this, &APawn::AddControllerYawInput);
 	PlayerInputComponent->BindAxis("TurnRate", this, &ASkateProjectCharacter::TurnAtRate);
-	PlayerInputComponent->BindAxis("LookUp", this, &APawn::AddControllerPitchInput);
 	PlayerInputComponent->BindAxis("LookUpRate", this, &ASkateProjectCharacter::LookUpAtRate);
 }
 

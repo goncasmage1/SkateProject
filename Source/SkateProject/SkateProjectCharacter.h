@@ -19,14 +19,14 @@ struct FTrickPoint
 	GENERATED_BODY()
 
 	//Angle in degrees that will execute this point of the trick
-	UPROPERTY(BlueprintReadWrite)
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
 		int	Angle;
 	//The 2D Position in which the analog must me moved in order to hit this point
 	//UPROPERTY(BlueprintReadWrite)
 		FVector2D DesiredPosition;
 
 	//Whether the player should move analog directly to this point, or drag along the edge
-	UPROPERTY(BlueprintReadWrite)
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
 		bool bDrag;
 };
 
@@ -35,10 +35,12 @@ struct FTrick
 {
 	GENERATED_BODY()
 
-	UPROPERTY(BlueprintReadWrite)
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
 		FName TrickName;
-	UPROPERTY(BlueprintReadWrite)
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
 		TArray<FTrickPoint> Points;
+
+	int TrickIndex;
 };
 
 UCLASS(config=Game)
@@ -54,9 +56,12 @@ class ASkateProjectCharacter : public ACharacter
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = Camera, meta = (AllowPrivateAccess = "true"))
 	class UCameraComponent* FollowCamera;
 
+	UPROPERTY(VisibleAnywhere, Category = Skateboard)
+		class USkeletalMeshComponent* SM_Skateboard;
+
 public:
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite)
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
 		TArray<FTrick> Tricks;
 
 	/*
@@ -74,6 +79,12 @@ public:
 	//Analog inner deadzone
 	UPROPERTY(EditDefaultsOnly)
 		float Deadzone;
+
+	UPROPERTY(EditDefaultsOnly)
+		TArray<class UCurveVector*> TricksLocationCurves;
+
+	UPROPERTY(EditDefaultsOnly)
+		TArray<class UCurveVector*> TricksRotationCurves;
 
 	ASkateProjectCharacter();
 	virtual void BeginPlay() override;
@@ -109,12 +120,26 @@ protected:
 
 	int TrickPointDepth;
 
+	FVector StartPosition;
+	FRotator StartRotation;
+
+	//Counts the execution time of the trick
+	float TimeCounter;
+	//The time that takes to execute the current trick
+	float TrickTime;
+
 	//Is the player dragging the analog around the edge?
 	bool bIsDragging;
 	//Determine whether the analog is inside a safezone
 	bool bInsideSafezone;
 	//Determines whether the analog is still returning to origin after doing a trick
 	bool bReturningFromTrick;
+	//Determines whether a trick is being executed (animated)
+	bool bExecutingTrick;
+
+	void HandleTrickExecution(float DeltaTime);
+	void HandleAnalogInput(float DeltaTime);
+	void AnalyzeTricks();
 
 	/*Attempts to execute an eligible trick and resets the variables accordingly
 	to allow the player to execute another trick*/
