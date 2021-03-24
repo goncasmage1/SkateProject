@@ -4,9 +4,9 @@
 #include "AnalogViewWidget.h"
 #include "Blueprint/UserWidget.h"
 
-void ASkateController::Possess(APawn * InPawn)
+void ASkateController::OnPossess(APawn * InPawn)
 {
-	Super::Possess(InPawn);
+	Super::OnPossess(InPawn);
 	if (AnalogViewBP)
 	{
 		//Creating our widget and adding it to our viewport

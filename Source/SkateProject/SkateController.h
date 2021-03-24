@@ -25,7 +25,7 @@ protected:
 
 public:
 
-	virtual void Possess(APawn* NewPawn) override;
+	virtual void OnPossess(APawn* NewPawn) override;
 
 	void UpdateAnalogLocation(FVector2D NewLocation);
 	void UpdateLastLocation(FVector2D NewLocation);
